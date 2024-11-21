@@ -52,10 +52,10 @@ Shader "Elysia/S_Hair"
         
         [Header(Marschner Hair)]
         [Space(10)]
-        _MarschnerHairSpecular("Specular", Float) = 1
-        _MarschnerHairScatter("Scatter", Float) = 1
-        _MarschnerHairTransmitIntensity("Transmit sIntensity", Range(0, 2)) = 1
-        _MarschnerHairShift("Shit", Range(0, 2)) = 0
+        _MarschnerHairScatter("Scatter", Range(0, 2)) = 1
+        _MarschnerHairSpecular("Specular", Range(0, 2)) = 1
+        _MarschnerHairTransmitIntensity("Transmit Intensity", Range(0, 2)) = 1
+        _MarschnerHairShift("Shit", Range(0, 1)) = 0.035
     }
     
     SubShader

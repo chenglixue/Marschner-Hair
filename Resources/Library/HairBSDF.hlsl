@@ -112,7 +112,7 @@ FDirectLighting MarschnerHairShading(MyBRDFData brdf_data, MyLightData light_dat
     };	
 
     #if (HAIR_COMPONENT_MULTISCATTER == 1)
-        o.diffuse += MarschnerDiffuse(brdf_data.albedo, brdf_data.metallic, lightDir, light_data.viewDirWS, light_data.normalWS, shadow) * max(_MarschnerHairScatter, 0.f);
+        o.diffuse += max(MarschnerDiffuse(brdf_data.albedo, brdf_data.metallic, lightDir, light_data.viewDirWS, light_data.normalWS, shadow) * max(_MarschnerHairScatter, 0.f), 0.f);
     #endif
 
     float M = 0.f, N = 0.f, A = 0.f, T = 0.f, DP = 0.f;
@@ -122,16 +122,19 @@ FDirectLighting MarschnerHairShading(MyBRDFData brdf_data, MyLightData light_dat
         float v = pow2(clampedRoughness);
         M += rcp(v * exp(2.f / v));
         M *= exp((1.f - sinThetaL * sinThetaV) / v);
-        M *= ModifiedBesselI0(cosThetaL * cosThetaV / v);
+        M *= ModifiedBesselI0(sinThetaL + sinThetaV - Alpha[0] * cosThetaV / v);
 
         // 高斯近似
-        //M = Hair_g(pow2(clampedRoughness), sinThetaL + sinThetaV - Alpha[0]);
+        const float sa = sin(Alpha[0]);
+        const float ca = cos(Alpha[0]);
+        float shift = 2 * sa * (ca * cosHalfPhi * sqrt(1 - pow2(sinThetaV)) + sa * sinThetaV);
+        M = Hair_g(pow2(clampedRoughness) * cosHalfPhi * sqrt(2), sinThetaL + sinThetaV - shift);
     
         N = 0.25f * cosHalfPhi;
 
         A = Hair_F(sqrt(saturate(0.5f + 0.5f * VoL)));
         
-        R += M * N * A * lerp(1, 0.5f, saturate(-VoL)) * max(_MarschnerHairSpecular, 0.f);
+        R += M * N * A  * max(_MarschnerHairSpecular, 0.f) * lerp(1, 0.5f, saturate(-VoL));
 
         o.specular += R;
     #endif
@@ -143,7 +146,7 @@ FDirectLighting MarschnerHairShading(MyBRDFData brdf_data, MyLightData light_dat
     
         float a = rcp(n_prime);
         float hTT = cosHalfPhi * (1.f + a * (0.6f - 0.8f * cosPhi));
-        T = pow(brdf_data.albedo, 0.5f * sqrt(1.f - pow2(hTT * a)) * rcp(cosThetaD));
+        T = pow(brdf_data.albedo, 0.5f * sqrt(1.f - pow2(hTT * a)) / cosThetaD);
         DP = exp(-3.65f * cosPhi - 3.98f);
         N = T * DP;
 
@@ -159,17 +162,17 @@ FDirectLighting MarschnerHairShading(MyBRDFData brdf_data, MyLightData light_dat
 
         M = Hair_g(2.f * pow2(clampedRoughness), sinThetaL + sinThetaV - Alpha[2]);
 
-        T = pow(brdf_data.albedo, 0.8f * rcp(cosThetaD));
+        T = pow(brdf_data.albedo, 0.8f / cosThetaD);
         DP = exp(17.f * cosPhi - 16.78f);
         N = T * DP;
 
         float fTRT = Hair_F(cosThetaD * 0.5f);
         A = pow2(1.f - fTRT) * fTRT;
 
-        TRT += M * N * A;
+        TRT += M * N * A * 3;
         o.specular += TRT;
     #endif
-        
+         
     #endif
     
     return o;
