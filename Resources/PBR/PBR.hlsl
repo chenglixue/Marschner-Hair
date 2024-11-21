@@ -274,7 +274,7 @@ float3 ShadeGI(float3 alebdo, float metallic, float roughness, float3 normal, fl
     float3 irradiance = texCUBE(_DiffuseIBLTex, normal).rgb;
     float3 GIDiffuse  = KD_IBL * alebdo * irradiance;
     
-    #if defined(_SHADINGMODEL_SUBSURFACEPROFILE)
+    #if defined(_SHADINGMODEL_SUBSURFACEPROFILE) || defined(_SHADINGMODEL_MARSCHNERHAIR)
         return GIDiffuse;
     #endif
 
@@ -310,7 +310,7 @@ void PBRPS(PSInput i, out PSOutput o)
         o.color = float4(brdfData.emission, brdfData.opacity);
     #else
         FDirectLighting shadeDirect = ShadeDirectLight(brdfData, lightData, mainLight, i.posWS, mainLight.shadowAttenuation, i.uv);
-        color += (shadeDirect.diffuse + shadeDirect.specular)* mainLight.color * mainLight.shadowAttenuation * mainLight.distanceAttenuation;
+        color += (shadeDirect.diffuse + shadeDirect.specular) * mainLight.color * mainLight.shadowAttenuation * mainLight.distanceAttenuation;
         float3 GI = ShadeGI(brdfData.albedo, brdfData.metallic, brdfData.roughness, brdfData.normal, lightData.reflectDirWS, brdfData.NoV, brdfData.F0);
         color += (GI + brdfData.emission) * brdfData.AO;
         o.color = float4(color, brdfData.opacity);
