@@ -3,6 +3,36 @@
 #include "Assets/Resources/Library/BRDF.hlsl"
 #include "Assets/Resources/Library/HairBSDF.hlsl"
 
+#pragma region Marco
+#if defined(_SHADINGMODEL_UNLIT)
+    #define _ShadingModel_Unlit 1
+#elif defined(_SHADINGMODEL_DEFAULTLIT)
+    #define _ShadingModel_DefaultLit 1
+#elif defined(_SHADINGMODEL_PREINTEGRATEDSKIN)
+    #define _ShadingModel_PreintegratedSkin 1
+    #if defined(_PREINTEGRATEDSKINQUALITY_LOW)
+        #define _PreintegratedSkin_Quality_Low 1
+    #elif defined(_PREINTEGRATEDSKINQUALITY_HIGH)
+        #define _PreintegratedSkin_Quality_High 1
+    #endif
+#elif defined(_SHADINGMODEL_SUBSURFACEPROFILE)
+    #define _ShadingModel_SubsurfaceProfile 1
+#elif defined(_SHADINGMODEL_MARSCHNERHAIR)
+    #define _ShadingModel_MarschnerHair 1
+#elif defined(_SHADINGMODEL_KAJIYAKAYHAIR)
+    #define _ShadingModel_KajiyaKayHair 1
+#elif defined(_SHADINGMODEL_EYE)
+    #define _ShadingModel_Eye 1
+    #define _ViewDirTS_ON 1
+    #include"Assets/Resources/Library/Eye.hlsl"
+#endif
+
+#if defined(HAIR_DITHER_OPACITY_MASK)
+    #define _Hair_Dither_Opacity_Mask 1
+#endif
+#pragma endregion 
+
+#pragma region Declare
 cbuffer UnityPerMaterial
 {
     int _Enable_Albedo;
@@ -19,29 +49,60 @@ cbuffer UnityPerMaterial
     half   _AlbedoPow;
     half   _Mask;
     float3 _Emission;
-    
     float3 _Normal;
-    half    _NormalIntensity;
-    
-    float _Metallic;
-    float _Roughness;
-    float _AO;
-    
-    half    _Cutoff;
+    half   _NormalIntensity;
+    float  _Metallic;
+    float  _Roughness;
+    float  _AO;
+    half   _Cutoff;
+    half   _SpecularIntensity;
+    half   _GIDiffIntensity;
+    half   _GISpecularIntensity;
     
     float4 _AlbedoTex_ST;
     float4 _NormalTex_ST;
+    #if _ShadingModel_KajiyaKayHair == 1
+        float4 _AnisotropyTex_ST;
+    #endif
 
     // PreIntegrated Skin
+    #if _ShadingModel_PreintegratedSkin == 1
     half3 _PreIntegratedSkinTint;
     half  _PreIntegratedSkinSpecularIntensity;
     half  _CurveFactor;
     int   _BlurNormalIntensity;
+    #endif
 
     // Subsurface Profile
+    #if (_PreintegratedSkin_Quality_High == 1) || (_ShadingModel_SubsurfaceProfile == 1)
     half  _LodeA;
     half  _LodeB;
+    #endif
+
+    // Eye
+    #if _ShadingModel_Eye == 1
+    half  _IrisPow;
+    half3 _IrisColor;
+    half  _ScaleByCenter;
+    half  _IrisHeightScale;
+    half  _MatCapIntensity;
+    half3 _CausticColor;
+    #endif
+
+    #if _ShadingModel_KajiyaKayHair == 1
+        half _AnisotropyIntensity;
+        half3 _KajiyaKayDiffColor;
     
+        half3 _KajiyaKayFirstSpecularColor;
+        half _KajiyaKayFirstWidth;
+        half _KajiyaKayFirstIntensity;
+        half _KajiyaKayFirstOffset;
+
+        half3 _KajiyaKaySecondSpecularColor;
+        half _KajiyaKaySecondWidth;
+        half _KajiyaKaySecondIntensity;
+        half _KajiyaKaySecondOffset;
+    #endif
 }
 
 Texture2D<float4> _AlbedoTex;
@@ -51,9 +112,24 @@ Texture2D<float>  _MetallicTex;
 Texture2D<float>  _RoughnessTex;
 Texture2D<float>  _AOTex;
 Texture2D<float4> _EmissionTex;
-Texture2D<float3> _PreIntegrateSSSLutTex;
-Texture2D<float>  _SSSNDFLutTex;
-Texture2D<float>  _AnisotropyTex;
+
+#if _ShadingModel_PreintegratedSkin == 1
+    Texture2D<float3> _PreIntegrateSSSLutTex;
+#if _PreintegratedSkin_Quality_Low == 1
+    Texture2D<float>  _SSSNDFLutTex;
+#endif
+#endif
+
+#if _ShadingModel_Eye == 1
+    Texture2D<half>   _IrisTex;
+    Texture2D<half>   _IrisHeightTex;
+    Texture2D<half3>  _MatCap;
+    Texture2D<half>   _CausticMaskTex;
+#endif
+
+#if _ShadingModel_KajiyaKayHair == 1
+    Texture2D<float>  _AnisotropyTex;
+#endif
 
 samplerCUBE _DiffuseIBLTex;
 samplerCUBE _SpecularIBLTex;
@@ -68,7 +144,6 @@ struct VSInput
 
     float2      uv           : TEXCOORD0;
 };
-
 struct PSInput
 {
     float2      uv              : TEXCOORD0;
@@ -79,12 +154,15 @@ struct PSInput
     float3      normalWS        : NORMAL;
     float3      tangentWS       : TANGENT;
     float3      bitTangentWS    : TEXCOORD3;
+    #if (_ViewDirTS_ON == 1)
+    float3      viewDirTS       : TEXCOORD1;
+    #endif
 };
-
 struct PSOutput
 {
     float4      color           : SV_TARGET;
 };
+#pragma endregion 
 
 PSInput PBRVS(VSInput i)
 {
@@ -98,37 +176,66 @@ PSInput PBRVS(VSInput i)
     o.tangentWS = vertexNormalData.tangentWS;
     o.bitTangentWS = vertexNormalData.bitangentWS;
 
+    #if (_ViewDirTS_ON == 1)
+        float3x3 O2T = float3x3(i.tangentOS.xyz, cross(i.tangentOS.xyz, i.normalOS.xyz) * i.tangentOS.w, i.normalOS.xyz);
+        float3 viewDirTS = mul(O2T, TransformWorldToObjectDir(GetCameraPositionWS() - o.posWS));
+        o.viewDirTS = viewDirTS;
+    #endif
+
     o.uv = i.uv;
 
     return o;
 }
 
-MyBRDFData SetBRDFData(float2 uv, float3 LightColor, float3 LightDir, inout MyLightData LightData)
+MyBRDFData SetBRDFData(float2 uv, float3 LightColor, float3 LightDir, inout MyLightData LightData
+    #if (_ViewDirTS_ON == 1)
+        ,float3 viewDirTS
+    #endif
+)
 {
-    half3  albedoValue                     = _AlbedoTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv * _AlbedoTex_ST.xy + _AlbedoTex_ST.zw, 0).rgb;
-    float3 normalValue                     = UnpackNormalScale(_NormalTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv * _NormalTex_ST.xy + _NormalTex_ST.zw, _BlurNormalIntensity), _NormalIntensity);
-    half3  emissionValue                   = _EmissionTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv, 0).rgb;
-    half   metallicValue                   = _MetallicTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv, 0).r;
-    half   roughnessValue                  = _RoughnessTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv, 0).r;
-    half   AOValue                         = _AOTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv, 0).r;
-    half   maskValue                       = _MaskTex.SampleLevel(Smp_ClampU_ClampV_Linear, uv * _AlbedoTex_ST.xy + _AlbedoTex_ST.zw, 0).r;
-    half   shift                           = _AnisotropyTex.SampleLevel(Smp_ClampU_ClampV_Linear, uv * _AlbedoTex_ST.xy + _AlbedoTex_ST.zw, 0) - 0.5f;
-    if(_Enable_Albedo)    albedoValue      = _Albedo;
-    if(_Enable_Normal)    normalValue      = _Normal;
-    if(_Enable_Metallic)  metallicValue    = _Metallic;
-    if(_Enable_Roughness) roughnessValue   = _Roughness;
-    if(_Enable_AO)        AOValue          = _AO;
-    if(_Enable_Emission)  emissionValue    = _Emission;
-    if(_Enable_Mask)      maskValue        = _Mask;
+    MyBRDFData o;
+    
+    half3  albedoValue                      = _AlbedoTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv * _AlbedoTex_ST.xy + _AlbedoTex_ST.zw, 0).rgb;
+    float3 normalValue                  = UnpackNormalScale(_NormalTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv * _NormalTex_ST.xy + _NormalTex_ST.zw, 0), _NormalIntensity);
+    #if _ShadingModel_PreintegratedSkin == 1
+        float3 normalValue                  = UnpackNormalScale(_NormalTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv * _NormalTex_ST.xy + _NormalTex_ST.zw, _BlurNormalIntensity), _NormalIntensity);
+    #endif
+    half3  emissionValue                    = _EmissionTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv, 0).rgb;
+    half   metallicValue                    = _MetallicTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv, 0).r;
+    half   roughnessValue                   = _RoughnessTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv, 0).r;
+    half   AOValue                          = _AOTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv, 0).r;
+    half   maskValue                        = _MaskTex.SampleLevel(Smp_ClampU_ClampV_Linear, uv * _AlbedoTex_ST.xy + _AlbedoTex_ST.zw, 0).r;
+    if(_Enable_Albedo)    albedoValue       = _Albedo;
+    if(_Enable_Normal)    normalValue       = _Normal;
+    if(_Enable_Metallic)  metallicValue     = _Metallic;
+    if(_Enable_Roughness) roughnessValue    = _Roughness;
+    if(_Enable_AO)        AOValue           = _AO;
+    if(_Enable_Emission)  emissionValue     = _Emission;
+    if(_Enable_Mask)      maskValue         = _Mask;
 
     float3 FO = lerp(0.04, albedoValue, metallicValue);
     float3 radiance = LightColor;
-
-    MyBRDFData o;
-    o.albedo  = albedoValue * _AlbedoTint * _AlbedoPow;
-    o.opacity = maskValue;
+    
     o.normal = SafeNormalize(mul(normalValue, LightData.TBN));
-    o.emission = emissionValue;
+    #if (_ShadingModel_Eye == 1)
+        float2 eyeUV            = ScaleUVByCenter(uv, _ScaleByCenter);
+        half height             = _IrisHeightTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, eyeUV, 0);
+        eyeUV = ParallaxMapping(viewDirTS, eyeUV, height, _IrisHeightScale);
+        o.albedo                = _AlbedoTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, eyeUV, 0).rgb
+                                                + _IrisTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, eyeUV, 0) * _IrisColor;
+    #else
+        o.albedo  = albedoValue * _AlbedoTint * _AlbedoPow;
+    #endif
+        o.opacity = maskValue;
+    #if (_ShadingModel_Eye == 1)
+        float causticMask =  _CausticMaskTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, Unity_Rotate_Degrees_float(eyeUV, 0.5, LightDir.r), 0);
+        o.emission = causticMask * _CausticColor;
+    #else
+        o.emission = emissionValue;
+    #endif
+    #if (_ShadingModel_KajiyaKayHair == 1)
+        o.anisotropy = _AnisotropyTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, uv * _AnisotropyTex_ST.xy + _AnisotropyTex_ST.zw, 0) - 0.5f;
+    #endif
     o.specular = 0;
     o.metallic = metallicValue;
     o.roughness = roughnessValue;
@@ -147,9 +254,11 @@ MyBRDFData SetBRDFData(float2 uv, float3 LightColor, float3 LightDir, inout MyLi
     o.HoL = max(dot(halfVector, lightDir), FLT_EPS);
     o.HoX = max(dot(halfVector, LightData.tangentWS), FLT_EPS);
     o.HoY = max(dot(halfVector, LightData.bitTangentWS), FLT_EPS);
+    #if (_PreintegratedSkin_Quality_High == 1) || (_ShadingModel_SubsurfaceProfile == 1)
     o.LobeA = _LodeA;
     o.LobeB = _LodeB;
-    #if defined(_SHADINGMODEL_SCHEUERMANNHAIR)
+    #endif
+    #if (_ShadingModel_ScheuerMannHair == 1)
         o.shift = shift;
     #endif
 
@@ -208,7 +317,7 @@ float3 DualSpecularGGX(float AverageRoughness, float Lobe0Roughness, float Lobe1
 FDirectLighting ShadeDirectLight(MyBRDFData brdfData, MyLightData lightData, Light light, float3 positionWS, float shadow, float2 uv)
 {
     FDirectLighting o = (FDirectLighting)0;
-    #if defined (_SHADINGMODEL_DEFAULTLIT)
+    #if (_ShadingModel_DefaultLit == 1)
         const float NDF     = NDF_GGX(brdfData.roughness2, brdfData.NoH);
         const float G       = Geometry_Smiths_SchlickGGX(brdfData.NoV, brdfData.NoL, brdfData.roughness);
         const float3 F      = Fresnel_UE4(brdfData.HoV, brdfData.F0);
@@ -223,15 +332,15 @@ FDirectLighting ShadeDirectLight(MyBRDFData brdfData, MyLightData lightData, Lig
         o.diffuse  += diffuse * brdfData.NoL;
         o.specular += specular * brdfData.NoL;
     
-    #elif defined(_SHADINGMODEL_PREINTEGRATEDSKIN)
+    #elif (_ShadingModel_PreintegratedSkin == 1)
         if(brdfData.NoL > 0.f)
         {
             float curve = saturate(_CurveFactor * length(fwidth(brdfData.normal)) / length(fwidth(positionWS)));
             float3 diffuse = _PreIntegrateSSSLutTex.SampleLevel(Smp_ClampU_ClampV_Linear, float2(brdfData.NoL * 0.5f + 0.5f, curve), 0);
             o.diffuse += diffuse * brdfData.albedo * _PreIntegratedSkinTint;
 
-            #if defined (_PREINTEGRATEDSKINQUALITY_LOW)
-                float3 halfVectorUnNor = lightDir + (GetCameraPositionWS() - positionWS);
+            #if (_PreintegratedSkin_Quality_Low == 1)
+                float3 halfVectorUnNor = light.direction + (GetCameraPositionWS() - positionWS);
                 float NoH = dot(lightData.normalWS, halfVectorUnNor);
                 float NDF = pow(2.f * _SSSNDFLutTex.SampleLevel(Smp_ClampU_ClampV_Linear, float2(NoH, brdfData.roughness), 0), 10);
                 float F = SchlickFresnel(brdfData.HoV, brdfData.F0);
@@ -239,7 +348,7 @@ FDirectLighting ShadeDirectLight(MyBRDFData brdfData, MyLightData lightData, Lig
                 float3 specular = max(NDF * F * rcp(G), FLT_EPS);
                 o.specular += specular * brdfData.NoL * _PreIntegratedSkinSpecularIntensity * 0.5f;
             
-            #elif defined (_PREINTEGRATEDSKINQUALITY_HIGH)
+            #elif (_PreintegratedSkin_Quality_High == 1)
                 float lobeARoughness = brdfData.roughness * brdfData.LobeA;
                 lobeARoughness = lerp(1.f, lobeARoughness, saturate(brdfData.opacity * 10.0f));
                 float lobeBRoughness = brdfData.roughness * brdfData.LobeB;
@@ -250,14 +359,38 @@ FDirectLighting ShadeDirectLight(MyBRDFData brdfData, MyLightData lightData, Lig
             #endif
         }
 
-    #elif defined(_SHADINGMODEL_SUBSURFACEPROFILE)
+    #elif (_ShadingModel_SubsurfaceProfile == 1)
         if(brdfData.NoL > 0.f)
         {
             float3 diffuse = Diffuse_Burley(brdfData.albedo, brdfData.roughness, brdfData.NoV, brdfData.NoL, brdfData.HoV);
             o.diffuse += diffuse * brdfData.NoL;
         }
-    #elif defined(_SHADINGMODEL_MARSCHNERHAIR)
+    
+    #elif (_ShadingModel_MarschnerHair == 1)
         o = MarschnerHairShading(brdfData, lightData, light.direction, shadow);
+    #elif (_ShadingModel_KajiyaKayHair == 1)
+        float3 diffuse = KajiyaKayDiffuse(brdfData.albedo, brdfData.normal, light.direction) * _KajiyaKayDiffColor;
+
+        float3 shiftTangent1 = lerp(lightData.bitTangentWS + _KajiyaKayFirstOffset, KajiyaKayShiftTangent(lightData.tangentWS, lightData.normalWS, brdfData.anisotropy + _KajiyaKayFirstOffset), _AnisotropyIntensity);
+        float3 shiftTangent2 = lerp(lightData.bitTangentWS + _KajiyaKaySecondOffset, KajiyaKayShiftTangent(lightData.tangentWS, lightData.normalWS, brdfData.anisotropy + _KajiyaKaySecondOffset), _AnisotropyIntensity);
+
+        float3 specular = KajiyaKaySpecular(_KajiyaKayFirstWidth, _KajiyaKayFirstIntensity, shiftTangent1, light.direction, lightData.viewDirWS) * _KajiyaKayFirstSpecularColor;
+        specular += KajiyaKaySpecular(_KajiyaKaySecondWidth, _KajiyaKaySecondIntensity, shiftTangent2, light.direction, lightData.viewDirWS) * _KajiyaKaySecondSpecularColor;
+        specular *= smoothstep(-1, 1, brdfData.NoL);
+    
+        o.diffuse = diffuse;
+        o.specular = specular;
+    #elif (_ShadingModel_Eye == 1)
+        if(brdfData.NoL > 0.f)
+        {
+            float3 diffuse = Diffuse_Lambert(brdfData.albedo);
+            o.diffuse = diffuse;
+
+            float D = NDF_GGX(brdfData.roughness, brdfData.NoH);
+            float F = SchlickFresnel(brdfData.HoV, brdfData.F0);
+            float G = Vis_SmithJointApprox(brdfData.roughness2, brdfData.NoV, brdfData.NoL);
+            o.specular = D * brdfData.NoL * _SpecularIntensity;
+        }
     #endif
     
     return o;
@@ -269,12 +402,13 @@ float3 ShadeGI(float3 alebdo, float metallic, float roughness, float3 normal, fl
     // -----------------
     //GI Diffuse
     // -----------------
+    float3 SHColor = SH_IndirectionDiff(normal);
     float3 F_IBL      = FresnelSchlickRoughness(NoV, F0, roughness);
-    float KD_IBL      = (1 - F_IBL) * (1 - metallic);
-    float3 irradiance = texCUBE(_DiffuseIBLTex, normal).rgb;
-    float3 GIDiffuse  = KD_IBL * alebdo * irradiance;
+    float  KD_IBL     = (1 - F_IBL) * (1 - metallic);
+    //float3 irradiance = texCUBE(_DiffuseIBLTex, normal).rgb;
+    float3 GIDiffuse  = KD_IBL * alebdo * SHColor * _GIDiffIntensity;
     
-    #if defined(_SHADINGMODEL_SUBSURFACEPROFILE) || defined(_SHADINGMODEL_MARSCHNERHAIR)
+    #if (_ShadingModel_SubsurfaceProfile == 1) 
         return GIDiffuse;
     #endif
 
@@ -283,9 +417,11 @@ float3 ShadeGI(float3 alebdo, float metallic, float roughness, float3 normal, fl
     // -----------------
     float rgh                = roughness * (1.7 - 0.7 * roughness);
     float lod                = 6.f * rgh;
-    float3 GISpecularColor   = texCUBElod(_SpecularIBLTex, float4(reflectDir, lod)).rgb;
-    float3 GISpecularFactor  = _SpecularFactorLUTTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, float2(NoV, roughness), 0).rgb;
-    float3 GISpecular        = (GISpecularFactor.r * F0 + GISpecularFactor.g) * GISpecularColor;
+    //float3 GISpecularColor   = texCUBElod(unity_SpecCube0, float4(reflectDir, lod)).rgb;
+    float3 GISpecularColor   = SAMPLE_TEXTURECUBE_LOD(unity_SpecCube0, samplerunity_SpecCube0, reflectDir, lod).rgb;
+    //float3 GISpecularFactor  = _SpecularFactorLUTTex.SampleLevel(Smp_RepeatU_RepeatV_Linear, float2(NoV, roughness), 0).rgb;
+    //float3 GISpecular        = (GISpecularFactor.r * F0 + GISpecularFactor.g) * GISpecularColor;
+    float3 GISpecular        = GISpecularColor * _GISpecularIntensity;
     
     return GIDiffuse + GISpecular;
 }
@@ -299,20 +435,34 @@ void PBRPS(PSInput i, out PSOutput o)
     MyBRDFData  brdfData;
     lightData       = SetLightData(i);
     Light mainLight = GetMainLight();
-    brdfData        = SetBRDFData(i.uv, mainLight.color, mainLight.direction, lightData);
-    #if defined(HAIR_DITHER_OPACITY_MASK)
+    brdfData        = SetBRDFData(i.uv, mainLight.color, mainLight.direction, lightData
+        #if (_ViewDirTS_ON == 1)
+            , i.viewDirTS
+        #endif
+    );
+    #if (_Hair_Dither_Opacity_Mask == 1)
     brdfData.opacity = DitherOpacityMask(i.uv * _ScreenSize.xy + _Time.yz * 100.f, brdfData.opacity);
     #endif
     clip(brdfData.opacity - _Cutoff);
 
     
-    #if defined(_SHADINGMODEL_UNLIT)
+    
+    #if (_ShadingModel_Unlit == 1)
         o.color = float4(brdfData.emission, brdfData.opacity);
     #else
         FDirectLighting shadeDirect = ShadeDirectLight(brdfData, lightData, mainLight, i.posWS, mainLight.shadowAttenuation, i.uv);
         color += (shadeDirect.diffuse + shadeDirect.specular) * mainLight.color * mainLight.shadowAttenuation * mainLight.distanceAttenuation;
         float3 GI = ShadeGI(brdfData.albedo, brdfData.metallic, brdfData.roughness, brdfData.normal, lightData.reflectDirWS, brdfData.NoV, brdfData.F0);
         color += (GI + brdfData.emission) * brdfData.AO;
+
+        #if (_ShadingModel_Eye == 1)
+        
+        // Mat cap
+        float2 matCapUV = GetMatCapUV(lightData.viewDirWS, brdfData.normal);
+        half3 matCap = _MatCap.SampleLevel(Smp_ClampU_ClampV_Linear, matCapUV, 0);
+        color += matCap * _MatCapIntensity * brdfData.NoL;
+        #endif
+    
         o.color = float4(color, brdfData.opacity);
     #endif
 }
