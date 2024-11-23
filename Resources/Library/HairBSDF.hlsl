@@ -10,15 +10,16 @@
 
     #define HAIR_DITHER_OPACITY_MASK 1
 
-    half _MarschnerHairSpecular;
-    half _MarschnerHairScatter;
-    half _MarschnerHairShift;
-    half _MarschnerHairTransmitIntensity;
+    half  _MarschnerHairRIntensity;
+    half3 _MarschnerHairSpecularColor;
+    half  _MarschnerHairScatter;
+    half  _MarschnerHairShift;
+    half  _MarschnerHairTTIntensity;
+    half  _MarschnerHairTRTIntensity;
 #endif
 
 #if defined (_SHADINGMODEL_SCHEUERMANNHAIR)
     #define HAIR_DITHER_OPACITY_MASK 1
-
 #endif
 
 // 第一类修正贝塞尔函数 I0(x) 的实现
@@ -56,6 +57,12 @@ float Hair_F(float CosTheta)
     return F0 + (1 - F0) * pow5(1 - CosTheta);
 }
 
+float3 KajiyaKayShiftTangent(float3 tangent, float3 normal, float shift)
+{
+    float3 bitTangent = tangent + normal * shift;
+    return normalize(bitTangent);
+}
+
 float3 MarschnerDiffuse(float3 albedo, float metallic, float3 lightDir, float3 viewDir, float3 normal, float shadow)
 {
     float3 fakeNormal = normalize(viewDir - normal * dot(viewDir, normal));
@@ -74,9 +81,24 @@ float3 MarschnerDiffuse(float3 albedo, float metallic, float3 lightDir, float3 v
     
     return sqrt(abs(albedo)) * diffuseScatter * scatterTint;
 }
-float3 ScheuermannDiffuse(float3 albedo, float3 normal, float3 lightDir)
+float3 KajiyaKayDiffuse(float3 albedo, float3 normal, float3 lightDir)
 {
     return lerp(0.25f, 1.f, dot(normal, lightDir)) * albedo;
+}
+float3 KajiyaKaySpecular(float width, float intensity, float3 shiftTangent, float3 lightDir, float3 viewDir)
+{
+    float3 o;
+    
+    float3 H = normalize(lightDir + viewDir);
+
+    float ToH = dot(shiftTangent, H);
+    float sinToH = sqrt(1.f - pow2(ToH));
+
+    o = smoothstep(-1, 0, ToH);
+    o *= pow(sinToH, width * 10.f);
+    o *= intensity;
+
+    return o;
 }
 
 FDirectLighting MarschnerHairShading(MyBRDFData brdf_data, MyLightData light_data, float3 lightDir, float shadow)
@@ -134,7 +156,7 @@ FDirectLighting MarschnerHairShading(MyBRDFData brdf_data, MyLightData light_dat
 
         A = Hair_F(sqrt(saturate(0.5f + 0.5f * VoL)));
         
-        R += M * N * A  * max(_MarschnerHairSpecular, 0.f) * lerp(1, 0.5f, saturate(-VoL));
+        R += M * N * A  * max(_MarschnerHairRIntensity, 0.f) * lerp(1, 0.5f, saturate(-VoL));
 
         o.specular += R;
     #endif
@@ -153,7 +175,7 @@ FDirectLighting MarschnerHairShading(MyBRDFData brdf_data, MyLightData light_dat
         float fTT = Hair_F(cosThetaD * sqrt(saturate(1.f - pow2(hTT))));
         A = pow2(1.f - fTT);
         
-        TT += M * N * A * _MarschnerHairTransmitIntensity;
+        TT += M * N * A * _MarschnerHairTTIntensity;
         o.specular += TT;
     #endif
 
@@ -169,10 +191,10 @@ FDirectLighting MarschnerHairShading(MyBRDFData brdf_data, MyLightData light_dat
         float fTRT = Hair_F(cosThetaD * 0.5f);
         A = pow2(1.f - fTRT) * fTRT;
 
-        TRT += M * N * A * 3;
+        TRT += M * N * A * 10 * _MarschnerHairTRTIntensity;
         o.specular += TRT;
     #endif
-         
+        o.specular *= _MarschnerHairSpecularColor;
     #endif
     
     return o;

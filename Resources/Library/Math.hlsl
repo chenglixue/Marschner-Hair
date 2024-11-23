@@ -172,3 +172,29 @@ inline half asinFast(half x)
 {
     return (0.5 * PI) - acosFast(x);
 }
+
+inline float linearstep(float min, float max, float value)
+{
+    return clamp((value - min) / (max - min), 0.0, 1.0);
+}
+
+float Unity_SphereMask_float4(float2 uv, float2 Center, float Radius, float Hardness)
+{
+    return 1 - saturate((distance(uv, Center) - Radius) / (1 - Hardness));
+}
+
+float2 Unity_Rotate_Degrees_float(float2 UV, float2 Center, float Rotation)
+{
+    Rotation = Rotation * (3.1415926f/180.0f);
+    UV -= Center;
+    float s = sin(Rotation);
+    float c = cos(Rotation);
+    float2x2 rMatrix = float2x2(c, -s, s, c);
+    rMatrix *= 0.5;
+    rMatrix += 0.5;
+    rMatrix = rMatrix * 2 - 1;
+    UV.xy = mul(UV.xy, rMatrix);
+    UV += Center;
+    
+    return UV;
+}

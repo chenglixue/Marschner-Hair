@@ -15,7 +15,7 @@ Shader "Elysia/S_Hair"
         [IntRange] _StencilRef("Stencil Ref", Range(0, 255)) = 0
         [Enum(UnityEngine.Rendering.CompareFunction)] _StencilTestCompare("Stencil Test Compare", Int) = 8
         [Enum(UnityEngine.Rendering.StencilOp)] _StencilPassOp("Stencil Pass Operator", Int) = 0
-        [KeywordEnum(Unlit, DefaultLit, MarschnerHair)] _ShadingModel("Shading Model", Float) = 0
+        [KeywordEnum(Unlit, DefaultLit, MarschnerHair, KajiyaKayHair)] _ShadingModel("Shading Model", Float) = 0
         [Space(10)]
         
         [Toggle] _Enable_Albedo             ("Enable Albedo", Int)           = 0
@@ -38,6 +38,8 @@ Shader "Elysia/S_Hair"
         _AO                                 ("AO Value", Range(0, 1))        = 1
         _Emission                           ("Emission Value", Color)        = (0, 0, 0, 0)
         _Cutoff                             ("Cut off", Range(0, 1))         = 0.5
+        _GIDiffIntensity                    ("GI Diff Intensity", Range(0, 1)) = 1
+        _GISpecularIntensity                ("GI Specular Intensity", Range(0, 1)) = 1
         
         [MainTex] _AlbedoTex                            ("Albedo Tex",    2D)                = "white" {}
         [Normal]  _NormalTex                            ("Normal Tex",    2D)                = "bump"  {}
@@ -52,10 +54,29 @@ Shader "Elysia/S_Hair"
         
         [Header(Marschner Hair)]
         [Space(10)]
-        _MarschnerHairScatter("Scatter", Range(0, 2)) = 1
-        _MarschnerHairSpecular("Specular", Range(0, 2)) = 1
-        _MarschnerHairTransmitIntensity("Transmit Intensity", Range(0, 2)) = 1
+        _MarschnerHairScatter("Scatter", Range(0, 5)) = 1
+        [HDR]_MarschnerHairSpecularColor("Specular Color", Color) = (1,1,1)
+        _MarschnerHairRIntensity("R Intensity", Range(0, 2)) = 1
+        _MarschnerHairTTIntensity("TT Intensity", Range(0, 2)) = 1
+        _MarschnerHairTRTIntensity("TT Intensity", Range(0, 5)) = 1
         _MarschnerHairShift("Shit", Range(0, 1)) = 0.035
+        [Space(10)]
+        
+        [Header(KajiyaKay Hair)]
+        [Space(10)]
+        _AnisotropyTex("Anisotropy Tex", 2D) = "black" {}
+        _AnisotropyIntensity("Anisotropy Intensity", Range(0, 1)) = 0
+        _KajiyaKayDiffColor("Diffuse Color", Color) = (1,1,1)
+        [Space(10)]
+        _KajiyaKayFirstSpecularColor("First Specular Color", Color) = (1,1,1,1)
+		_KajiyaKayFirstWidth("First Width", Range(0, 40)) = 2
+		_KajiyaKayFirstIntensity("First Intensity", Range(0.0, 2)) = 4
+		_KajiyaKayFirstOffset("First Offset", Range(-2,2)) = -0.5
+        [Space(10)]
+        _KajiyaKaySecondSpecularColor("Second Specular Color", Color) = (1,1,1,1)
+		_KajiyaKaySecondWidth("Second Width", Range(0.0, 40)) = 2
+		_KajiyaKaySecondIntensity("Second Intensity", Range(0.0, 2)) = 1.0
+		_KajiyaKaySecondOffset("_SecondOffset", Range(-2, 2)) = 0.0
     }
     
     SubShader
@@ -76,7 +97,6 @@ Shader "Elysia/S_Hair"
 
         HLSLINCLUDE
         #pragma target 4.5
-        #pragma shader_feature_local _PREINTEGRATEDSKINQUALITY_LOW _PREINTEGRATEDSKINQUALITY_HIGH
         #pragma multi_compile _ _MAIN_LIGHT_SHADOWS                    //接受阴影
         #pragma multi_compile _ _MAIN_LIGHT_SHADOWS_CASCADE            //产生阴影
         #pragma multi_compile _ _SHADOWS_SOFT                          //软阴影
@@ -92,7 +112,7 @@ Shader "Elysia/S_Hair"
 
             HLSLPROGRAM
             #pragma shader_feature _PCF_LOW _PCF_MIDDLE _PCF_HIGH
-            #pragma shader_feature_fragment _SHADINGMODEL_UNLIT _SHADINGMODEL_DEFAULTLIT  _SHADINGMODEL_MARSCHNERHAIR
+            #pragma shader_feature_fragment _SHADINGMODEL_UNLIT _SHADINGMODEL_DEFAULTLIT  _SHADINGMODEL_MARSCHNERHAIR _SHADINGMODEL_KAJIYAKAYHAIR
             #pragma vertex PBRVS
             #pragma fragment PBRPS
 
@@ -246,7 +266,7 @@ Shader "Elysia/S_Hair"
             
             HLSLPROGRAM
             #include_with_pragmas "Assets/Resources/PBR/PBR.hlsl"
-            
+            #pragma shader_feature_local _SHADINGMODEL_KAJIYAKAYHAIR
             #pragma vertex PBRVS
             #pragma fragment GBuffer
 
@@ -271,11 +291,12 @@ Shader "Elysia/S_Hair"
                 Light mainLight = GetMainLight();
                 brdfData        = SetBRDFData(i.uv, mainLight.color, mainLight.direction, lightData);
 
-                uint materialFlags = 1;
+                uint materialFlags = 4;
+                clip(brdfData.opacity - _Cutoff);
                 o.GBuffer0 = half4(brdfData.albedo.rgb, brdfData.opacity);
                 o.GBuffer1 = half4(brdfData.metallic, brdfData.roughness, brdfData.AO, PackMaterialFlags(materialFlags));
-                o.GBuffer2 = half4(brdfData.normal, _LodeA);
-                o.GBuffer3 = half4(brdfData.emission, _LodeB);
+                o.GBuffer2 = half4(brdfData.normal, 0);
+                o.GBuffer3 = half4(brdfData.emission, 0);
             }
 
             #include_with_pragmas "Assets/Resources/PBR/PBR.hlsl"

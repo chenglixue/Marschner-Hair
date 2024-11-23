@@ -14,3 +14,14 @@ SamplerState Smp_ClampU_ClampV_Point;
 SamplerState Smp_ClampU_RepeatV_Point;
 SamplerState Smp_RepeatU_RepeatV_Point;
 SamplerState Smp_RepeatU_ClampV_Point;
+
+half2 GetMatCapUV(half3 viewDirWS, half3 normalWS)
+{
+    half3 cameraFoward = -viewDirWS;
+    half3 viewUpDir = mul(UNITY_MATRIX_I_V, half4(half3 (0, 1, 0), 0)).xyz;
+    half3 cameraRight = normalize(cross(viewUpDir,cameraFoward));
+    half3 cameraUp = normalize(cross(cameraFoward,cameraRight));
+
+    half2 uv = mul(float3x3(cameraRight,cameraUp,cameraFoward),normalWS).xy * 0.5 + 0.5;
+    return uv;
+}

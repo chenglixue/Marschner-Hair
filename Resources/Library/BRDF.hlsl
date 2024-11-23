@@ -1,5 +1,5 @@
 #pragma once
-#include "Assets/Resources/Library/Common.hlsl"
+//#include "Assets/Resources/Library/Common.hlsl"
 
 struct MyBRDFData
 {
@@ -27,8 +27,12 @@ struct MyBRDFData
 
     float LobeA;
     float LobeB;
-    #if defined(_SHADINGMODEL_SCHEUERMANNHAIR)
-    float shift;    // hair
+    #if defined(_SHADINGMODEL_KAJIYAKAYHAIR)
+        float anisotropy;    // hair
+    #endif
+
+    #if defined(_SHADINGMODEL_EYE)
+    
     #endif
 };
 struct MyLightData
